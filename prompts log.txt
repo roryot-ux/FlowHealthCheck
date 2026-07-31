@@ -1,0 +1,18 @@
+Build me a very simple local web application called Flow Health Check.
+
+Requirements:
+
+- Runs locally on my PC
+- No login required
+- Modern appearance
+- User can upload a ZIP file
+
+Version 1 only:
+
+- Display uploaded filename
+- Display number of files inside the ZIP
+- Show a success message
+
+Use whichever technology you feel is most suitable.
+
+Please create all files required and explain how I run it locally.

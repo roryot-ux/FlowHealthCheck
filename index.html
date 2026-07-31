@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flow Health Check</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-border: #334155;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --success: #22c55e;
+    --danger: #ef4444;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #1e293b 0%, var(--bg) 60%);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 520px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 18px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .brand .logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), #a855f7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+
+  h1 {
+    font-size: 22px;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 6px 0 28px;
+  }
+
+  .dropzone {
+    border: 2px dashed var(--card-border);
+    border-radius: 14px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+
+  .dropzone:hover,
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .dropzone .icon { font-size: 34px; }
+
+  .dropzone p {
+    margin: 12px 0 4px;
+    font-size: 15px;
+  }
+
+  .dropzone .hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0;
+  }
+
+  input[type="file"] { display: none; }
+
+  .result {
+    margin-top: 24px;
+    display: none;
+  }
+
+  .result.show { display: block; }
+
+  .success-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: var(--success);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 18px;
+  }
+
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    margin-bottom: 10px;
+  }
+
+  .stat .label { color: var(--muted); font-size: 13px; }
+
+  .stat .value {
+    font-weight: 600;
+    font-size: 15px;
+    word-break: break-all;
+    text-align: right;
+    max-width: 60%;
+  }
+
+  .error-banner {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: var(--danger);
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    margin-top: 18px;
+  }
+
+  .error-banner.show { display: flex; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="logo">🩺</div>
+      <h1>Flow Health Check</h1>
+    </div>
+    <p class="subtitle">Upload a ZIP file to inspect its contents.</p>
+
+    <label class="dropzone" id="dropzone" for="fileInput">
+      <div class="icon">📦</div>
+      <p>Click to choose a ZIP file</p>
+      <p class="hint">or drag &amp; drop it here</p>
+    </label>
+    <input type="file" id="fileInput" accept=".zip,application/zip,application/x-zip-compressed" />
+
+    <div class="result" id="result">
+      <div class="success-banner">
+        <span>✅</span>
+        <span>ZIP file processed successfully!</span>
+      </div>
+      <div class="stat">
+        <span class="label">File name</span>
+        <span class="value" id="fileName">—</span>
+      </div>
+      <div class="stat">
+        <span class="label">Files inside ZIP</span>
+        <span class="value" id="fileCount">—</span>
+      </div>
+    </div>
+
+    <div class="error-banner" id="error">
+      <span>⚠️</span>
+      <span id="errorText">Something went wrong.</span>
+    </div>
+  </div>
+
+<script>
+  const fileInput = document.getElementById("fileInput");
+  const dropzone = document.getElementById("dropzone");
+  const result = document.getElementById("result");
+  const error = document.getElementById("error");
+  const errorText = document.getElementById("errorText");
+  const fileNameEl = document.getElementById("fileName");
+  const fileCountEl = document.getElementById("fileCount");
+
+  // Drag & drop handling
+  ["dragenter", "dragover"].forEach(evt =>
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    })
+  );
+  ["dragleave", "drop"].forEach(evt =>
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+    })
+  );
+  dropzone.addEventListener("drop", e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  fileInput.addEventListener("change", e => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+  });
+
+  function showError(msg) {
+    result.classList.remove("show");
+    errorText.textContent = msg;
+    error.classList.add("show");
+  }
+
+  async function handleFile(file) {
+    error.classList.remove("show");
+    result.classList.remove("show");
+
+    const looksLikeZip =
+      file.name.toLowerCase().endsWith(".zip") ||
+      /zip/.test(file.type);
+    if (!looksLikeZip) {
+      showError("Please upload a .zip file.");
+      return;
+    }
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const count = countZipEntries(buffer);
+      fileNameEl.textContent = file.name;
+      fileCountEl.textContent = count.toLocaleString();
+      result.classList.add("show");
+    } catch (err) {
+      showError("Could not read this ZIP file. It may be corrupt or invalid.");
+      console.error(err);
+    }
+  }
+
+  /**
+   * Counts the number of files inside a ZIP by reading its
+   * central directory. Folder entries (names ending in "/") are
+   * excluded so the count reflects actual files.
+   */
+  function countZipEntries(buffer) {
+    const view = new DataView(buffer);
+    const bytes = new Uint8Array(buffer);
+
+    // Locate the End Of Central Directory (EOCD) record.
+    // Signature 0x06054b50, searched from the end of the file
+    // (it sits within the last 65557 bytes because of the comment field).
+    const EOCD_SIG = 0x06054b50;
+    let eocd = -1;
+    const minPos = Math.max(0, buffer.byteLength - 65557 - 22);
+    for (let i = buffer.byteLength - 22; i >= minPos; i--) {
+      if (view.getUint32(i, true) === EOCD_SIG) {
+        eocd = i;
+        break;
+      }
+    }
+    if (eocd === -1) throw new Error("Not a valid ZIP file (no EOCD record found).");
+
+    // Offset 16 of EOCD holds the start offset of the central directory.
+    let cdOffset = view.getUint32(eocd + 16, true);
+    let totalEntries = view.getUint16(eocd + 10, true);
+
+    // Handle ZIP64 (used when entries/offsets exceed 32-bit fields).
+    if (cdOffset === 0xffffffff || totalEntries === 0xffff) {
+      const locSig = 0x07064b50; // ZIP64 EOCD locator
+      const locPos = eocd - 20;
+      if (locPos >= 0 && view.getUint32(locPos, true) === locSig) {
+        const zip64EocdOffset = Number(view.getBigUint64(locPos + 8, true));
+        if (view.getUint32(zip64EocdOffset, true) === 0x06064b50) {
+          totalEntries = Number(view.getBigUint64(zip64EocdOffset + 32, true));
+          cdOffset = Number(view.getBigUint64(zip64EocdOffset + 48, true));
+        }
+      }
+    }
+
+    // Walk the central directory and count non-folder entries.
+    const CD_SIG = 0x02014b50;
+    let pos = cdOffset;
+    let fileCount = 0;
+    for (let i = 0; i < totalEntries; i++) {
+      if (view.getUint32(pos, true) !== CD_SIG) break;
+      const nameLen = view.getUint16(pos + 28, true);
+      const extraLen = view.getUint16(pos + 30, true);
+      const commentLen = view.getUint16(pos + 32, true);
+      const nameBytes = bytes.subarray(pos + 46, pos + 46 + nameLen);
+      const name = new TextDecoder().decode(nameBytes);
+      if (!name.endsWith("/")) fileCount++;
+      pos += 46 + nameLen + extraLen + commentLen;
+    }
+
+    return fileCount;
+  }
+</script>
+</body>
+</html>
