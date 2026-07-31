@@ -16,3 +16,12 @@ Version 1 only:
 Use whichever technology you feel is most suitable.
 
 Please create all files required and explain how I run it locally.
+
+ Version 2.
+
+  When a ZIP is uploaded:
+
+  - Display all filenames found in the ZIP
+  - Show the folder structure
+  - Highlight JSON files
+  - Keep the existing functionality

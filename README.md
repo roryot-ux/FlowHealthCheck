@@ -76,6 +76,16 @@ Version 2 kept everything from Version 1 and added:
 - **JSON files highlighted**, with their own icon and a `JSON` badge
 - A count of how many **JSON files** were found
 
+### What Version 3 added
+
+Version 3 kept everything from Version 2 and added:
+
+- **Click any JSON file** in the tree to open it in a viewer
+- The JSON is shown **formatted with indentation** so it's easy to read
+- **Syntax highlighting** (keys, text, numbers, true/false, and null are coloured)
+- Files are opened **safely** — the contents are only displayed, never run, and
+  the viewer does not analyse or change the flow (that may come later)
+
 ---
 
 ## Your files stay private

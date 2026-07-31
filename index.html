@@ -220,6 +220,108 @@
     padding: 0 6px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
+
+  .node.clickable { cursor: pointer; transition: background 0.15s; }
+  .node.clickable:hover,
+  .node.clickable:focus-visible {
+    background: rgba(250, 204, 21, 0.22);
+    outline: none;
+  }
+
+  /* JSON viewer modal */
+  .viewer {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.72);
+    backdrop-filter: blur(2px);
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .viewer.show { display: flex; }
+
+  .viewer-panel {
+    width: 100%;
+    max-width: 760px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+  }
+
+  .viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--card-border);
+  }
+
+  .viewer-title {
+    font-weight: 600;
+    font-size: 15px;
+    word-break: break-all;
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+
+  .viewer-close {
+    flex: none;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: background 0.15s;
+  }
+
+  .viewer-close:hover { background: rgba(239, 68, 68, 0.2); }
+
+  .viewer-note {
+    padding: 0 20px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .viewer-note.warn {
+    color: #fbbf24;
+    padding: 12px 20px 0;
+  }
+
+  .viewer-body {
+    overflow: auto;
+    padding: 16px 20px 20px;
+  }
+
+  .viewer-loading { color: var(--muted); font-size: 14px; }
+
+  pre.json {
+    margin: 0;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre;
+    tab-size: 2;
+    color: var(--text);
+  }
+
+  /* Syntax highlighting */
+  .tok-key  { color: #7dd3fc; }
+  .tok-str  { color: #86efac; }
+  .tok-num  { color: #fca5a5; }
+  .tok-bool { color: #c4b5fd; }
+  .tok-null { color: #94a3b8; font-style: italic; }
 </style>
 </head>
 <body>
@@ -265,6 +367,18 @@
     </div>
   </div>
 
+  <!-- JSON viewer modal -->
+  <div class="viewer" id="viewer">
+    <div class="viewer-panel">
+      <div class="viewer-header">
+        <span class="viewer-title" id="viewerTitle">file.json</span>
+        <button class="viewer-close" id="viewerClose" aria-label="Close">✕</button>
+      </div>
+      <div class="viewer-note" id="viewerNote"></div>
+      <div class="viewer-body" id="viewerBody"></div>
+    </div>
+  </div>
+
 <script>
   const fileInput = document.getElementById("fileInput");
   const dropzone = document.getElementById("dropzone");
@@ -275,6 +389,9 @@
   const fileCountEl = document.getElementById("fileCount");
   const jsonCountEl = document.getElementById("jsonCount");
   const treeEl = document.getElementById("tree");
+
+  // Holds the currently loaded ZIP so JSON files can be read on click.
+  let currentBuffer = null;
 
   // Drag & drop handling
   ["dragenter", "dragover"].forEach(evt =>
@@ -319,6 +436,7 @@
 
     try {
       const buffer = await file.arrayBuffer();
+      currentBuffer = buffer;
       const entries = readZipEntries(buffer);
       const files = entries.filter(e => !e.isDir);
       const jsonFiles = files.filter(e => e.name.toLowerCase().endsWith(".json"));
@@ -374,23 +492,94 @@
       }
     }
 
-    // Walk the central directory and collect every entry.
+    // Walk the central directory and collect every entry, including the
+    // details needed to locate and decompress each file's data later.
     const CD_SIG = 0x02014b50;
     const decoder = new TextDecoder();
     const entries = [];
     let pos = cdOffset;
     for (let i = 0; i < totalEntries; i++) {
       if (view.getUint32(pos, true) !== CD_SIG) break;
+      const method = view.getUint16(pos + 10, true);
+      let compressedSize = view.getUint32(pos + 20, true);
+      let uncompressedSize = view.getUint32(pos + 24, true);
       const nameLen = view.getUint16(pos + 28, true);
       const extraLen = view.getUint16(pos + 30, true);
       const commentLen = view.getUint16(pos + 32, true);
+      let localHeaderOffset = view.getUint32(pos + 42, true);
       const nameBytes = bytes.subarray(pos + 46, pos + 46 + nameLen);
       const name = decoder.decode(nameBytes);
-      entries.push({ name, isDir: name.endsWith("/") });
+
+      // If any size/offset is maxed out, the real value lives in the
+      // ZIP64 extra field (header id 0x0001).
+      if (
+        compressedSize === 0xffffffff ||
+        uncompressedSize === 0xffffffff ||
+        localHeaderOffset === 0xffffffff
+      ) {
+        let ep = pos + 46 + nameLen;
+        const extraEnd = ep + extraLen;
+        while (ep + 4 <= extraEnd) {
+          const id = view.getUint16(ep, true);
+          const size = view.getUint16(ep + 2, true);
+          let dp = ep + 4;
+          if (id === 0x0001) {
+            if (uncompressedSize === 0xffffffff) { uncompressedSize = Number(view.getBigUint64(dp, true)); dp += 8; }
+            if (compressedSize === 0xffffffff) { compressedSize = Number(view.getBigUint64(dp, true)); dp += 8; }
+            if (localHeaderOffset === 0xffffffff) { localHeaderOffset = Number(view.getBigUint64(dp, true)); dp += 8; }
+            break;
+          }
+          ep += 4 + size;
+        }
+      }
+
+      entries.push({
+        name,
+        isDir: name.endsWith("/"),
+        method,
+        compressedSize,
+        uncompressedSize,
+        localHeaderOffset,
+      });
       pos += 46 + nameLen + extraLen + commentLen;
     }
 
     return entries;
+  }
+
+  /**
+   * Extracts a single entry's raw bytes from the ZIP, decompressing
+   * it if needed. Uses the browser's built-in DecompressionStream —
+   * no external libraries, fully offline.
+   */
+  async function extractEntryBytes(buffer, entry) {
+    const view = new DataView(buffer);
+    const off = entry.localHeaderOffset;
+    if (view.getUint32(off, true) !== 0x04034b50) {
+      throw new Error("Invalid local file header.");
+    }
+    // The local header's name/extra lengths can differ from the central
+    // directory's, so read them here to find where the data really starts.
+    const nameLen = view.getUint16(off + 26, true);
+    const extraLen = view.getUint16(off + 28, true);
+    const dataStart = off + 30 + nameLen + extraLen;
+    const compressed = new Uint8Array(buffer, dataStart, entry.compressedSize);
+
+    if (entry.method === 0) {
+      // Stored (no compression).
+      return compressed;
+    }
+    if (entry.method === 8) {
+      // Deflate.
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("This browser can't decompress ZIP entries.");
+      }
+      const ds = new DecompressionStream("deflate-raw");
+      const stream = new Response(compressed).body.pipeThrough(ds);
+      const out = await new Response(stream).arrayBuffer();
+      return new Uint8Array(out);
+    }
+    throw new Error("Unsupported compression method (" + entry.method + ").");
   }
 
   /**
@@ -411,6 +600,8 @@
         }
         // A path may imply a folder before an explicit folder entry appears.
         if (isFolder) node[part].__folder = true;
+        // Attach the ZIP entry to the leaf file node so it can be opened.
+        if (isLast && !isFolder) node[part].__entry = entry;
         node = node[part].__children;
       });
     }
@@ -443,6 +634,20 @@
         badge.className = "badge";
         badge.textContent = "JSON";
         span.appendChild(badge);
+
+        // Clicking a JSON file opens it in the viewer.
+        if (item.__entry) {
+          span.classList.add("clickable");
+          span.setAttribute("role", "button");
+          span.setAttribute("tabindex", "0");
+          span.addEventListener("click", () => openJson(item.__entry));
+          span.addEventListener("keydown", e => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              openJson(item.__entry);
+            }
+          });
+        }
       }
 
       li.appendChild(span);
@@ -453,6 +658,85 @@
     }
 
     return ul;
+  }
+
+  // ---- JSON viewer -------------------------------------------------------
+
+  const viewer = document.getElementById("viewer");
+  const viewerTitle = document.getElementById("viewerTitle");
+  const viewerBody = document.getElementById("viewerBody");
+  const viewerNote = document.getElementById("viewerNote");
+  const viewerClose = document.getElementById("viewerClose");
+
+  viewerClose.addEventListener("click", closeViewer);
+  viewer.addEventListener("click", e => {
+    if (e.target === viewer) closeViewer(); // click backdrop to close
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && viewer.classList.contains("show")) closeViewer();
+  });
+
+  function closeViewer() {
+    viewer.classList.remove("show");
+    viewerBody.innerHTML = "";
+  }
+
+  async function openJson(entry) {
+    viewerTitle.textContent = entry.name;
+    viewerNote.textContent = "";
+    viewerNote.className = "viewer-note";
+    viewerBody.innerHTML = '<div class="viewer-loading">Loading…</div>';
+    viewer.classList.add("show");
+
+    try {
+      const bytes = await extractEntryBytes(currentBuffer, entry);
+      const text = new TextDecoder("utf-8").decode(bytes);
+
+      let pretty;
+      try {
+        pretty = JSON.stringify(JSON.parse(text), null, 2);
+      } catch (parseErr) {
+        // Still show the file, but flag that it isn't valid JSON.
+        viewerNote.textContent =
+          "⚠️ This file could not be parsed as valid JSON — showing raw text.";
+        viewerNote.className = "viewer-note warn";
+        pretty = text;
+      }
+
+      viewerBody.innerHTML =
+        '<pre class="json"><code>' + syntaxHighlight(pretty) + "</code></pre>";
+    } catch (err) {
+      viewerBody.innerHTML = "";
+      viewerNote.textContent = "⚠️ Could not open this file: " + err.message;
+      viewerNote.className = "viewer-note warn";
+      console.error(err);
+    }
+  }
+
+  /**
+   * Wraps JSON tokens in <span> tags for colouring. Input is escaped
+   * first so file contents can never inject HTML into the page.
+   */
+  function syntaxHighlight(json) {
+    const escaped = json
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    return escaped.replace(
+      /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+      match => {
+        let cls = "tok-num";
+        if (/^"/.test(match)) {
+          cls = /:$/.test(match) ? "tok-key" : "tok-str";
+        } else if (/true|false/.test(match)) {
+          cls = "tok-bool";
+        } else if (/null/.test(match)) {
+          cls = "tok-null";
+        }
+        return '<span class="' + cls + '">' + match + "</span>";
+      }
+    );
   }
 </script>
 </body>
