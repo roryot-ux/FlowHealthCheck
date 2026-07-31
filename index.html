@@ -157,6 +157,69 @@
   }
 
   .error-banner.show { display: flex; }
+
+  .section-title {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 22px 0 10px;
+  }
+
+  .tree {
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 12px 8px;
+    max-height: 320px;
+    overflow: auto;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.9;
+  }
+
+  .tree ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 20px;
+  }
+
+  .tree > ul { padding-left: 4px; }
+
+  .tree li { white-space: nowrap; }
+
+  .node {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 1px 6px;
+    border-radius: 6px;
+  }
+
+  .node .ico { font-size: 13px; }
+
+  .node.folder { color: var(--text); font-weight: 600; }
+  .node.file { color: var(--muted); font-weight: 400; }
+
+  .node.json {
+    color: #fde047;
+    background: rgba(250, 204, 21, 0.12);
+    border: 1px solid rgba(250, 204, 21, 0.35);
+    font-weight: 600;
+  }
+
+  .badge {
+    display: inline-block;
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #713f12;
+    background: #fde047;
+    border-radius: 5px;
+    padding: 0 6px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
 </style>
 </head>
 <body>
@@ -187,6 +250,13 @@
         <span class="label">Files inside ZIP</span>
         <span class="value" id="fileCount">—</span>
       </div>
+      <div class="stat">
+        <span class="label">JSON files</span>
+        <span class="value" id="jsonCount">—</span>
+      </div>
+
+      <div class="section-title">Contents</div>
+      <div class="tree" id="tree"></div>
     </div>
 
     <div class="error-banner" id="error">
@@ -203,6 +273,8 @@
   const errorText = document.getElementById("errorText");
   const fileNameEl = document.getElementById("fileName");
   const fileCountEl = document.getElementById("fileCount");
+  const jsonCountEl = document.getElementById("jsonCount");
+  const treeEl = document.getElementById("tree");
 
   // Drag & drop handling
   ["dragenter", "dragover"].forEach(evt =>
@@ -247,9 +319,15 @@
 
     try {
       const buffer = await file.arrayBuffer();
-      const count = countZipEntries(buffer);
+      const entries = readZipEntries(buffer);
+      const files = entries.filter(e => !e.isDir);
+      const jsonFiles = files.filter(e => e.name.toLowerCase().endsWith(".json"));
+
       fileNameEl.textContent = file.name;
-      fileCountEl.textContent = count.toLocaleString();
+      fileCountEl.textContent = files.length.toLocaleString();
+      jsonCountEl.textContent = jsonFiles.length.toLocaleString();
+
+      renderTree(entries);
       result.classList.add("show");
     } catch (err) {
       showError("Could not read this ZIP file. It may be corrupt or invalid.");
@@ -258,11 +336,10 @@
   }
 
   /**
-   * Counts the number of files inside a ZIP by reading its
-   * central directory. Folder entries (names ending in "/") are
-   * excluded so the count reflects actual files.
+   * Reads a ZIP's central directory and returns an array of
+   * { name, isDir } entries. Works fully offline — no libraries.
    */
-  function countZipEntries(buffer) {
+  function readZipEntries(buffer) {
     const view = new DataView(buffer);
     const bytes = new Uint8Array(buffer);
 
@@ -297,22 +374,85 @@
       }
     }
 
-    // Walk the central directory and count non-folder entries.
+    // Walk the central directory and collect every entry.
     const CD_SIG = 0x02014b50;
+    const decoder = new TextDecoder();
+    const entries = [];
     let pos = cdOffset;
-    let fileCount = 0;
     for (let i = 0; i < totalEntries; i++) {
       if (view.getUint32(pos, true) !== CD_SIG) break;
       const nameLen = view.getUint16(pos + 28, true);
       const extraLen = view.getUint16(pos + 30, true);
       const commentLen = view.getUint16(pos + 32, true);
       const nameBytes = bytes.subarray(pos + 46, pos + 46 + nameLen);
-      const name = new TextDecoder().decode(nameBytes);
-      if (!name.endsWith("/")) fileCount++;
+      const name = decoder.decode(nameBytes);
+      entries.push({ name, isDir: name.endsWith("/") });
       pos += 46 + nameLen + extraLen + commentLen;
     }
 
-    return fileCount;
+    return entries;
+  }
+
+  /**
+   * Builds a nested folder structure from flat ZIP paths and
+   * renders it as an indented tree, highlighting JSON files.
+   */
+  function renderTree(entries) {
+    const root = {};
+
+    for (const entry of entries) {
+      const parts = entry.name.split("/").filter(Boolean);
+      let node = root;
+      parts.forEach((part, idx) => {
+        const isLast = idx === parts.length - 1;
+        const isFolder = !isLast || entry.isDir;
+        if (!node[part]) {
+          node[part] = { __folder: isFolder, __children: {} };
+        }
+        // A path may imply a folder before an explicit folder entry appears.
+        if (isFolder) node[part].__folder = true;
+        node = node[part].__children;
+      });
+    }
+
+    treeEl.innerHTML = "";
+    treeEl.appendChild(buildList(root));
+  }
+
+  function buildList(node) {
+    const ul = document.createElement("ul");
+    const names = Object.keys(node).sort((a, b) => {
+      const af = node[a].__folder, bf = node[b].__folder;
+      if (af !== bf) return af ? -1 : 1; // folders first
+      return a.localeCompare(b, undefined, { sensitivity: "base" });
+    });
+
+    for (const name of names) {
+      const item = node[name];
+      const li = document.createElement("li");
+      const span = document.createElement("span");
+      const isJson = !item.__folder && name.toLowerCase().endsWith(".json");
+
+      span.className = "node " + (item.__folder ? "folder" : isJson ? "file json" : "file");
+      span.innerHTML =
+        '<span class="ico">' + (item.__folder ? "📁" : isJson ? "🧾" : "📄") + "</span>" +
+        '<span class="name"></span>';
+      span.querySelector(".name").textContent = name;
+      if (isJson) {
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = "JSON";
+        span.appendChild(badge);
+      }
+
+      li.appendChild(span);
+      if (item.__folder && Object.keys(item.__children).length) {
+        li.appendChild(buildList(item.__children));
+      }
+      ul.appendChild(li);
+    }
+
+    return ul;
   }
 </script>
 </body>
