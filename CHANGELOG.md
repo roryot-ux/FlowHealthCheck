@@ -7,6 +7,40 @@ server, and no external libraries — everything runs locally in the browser.
 
 ---
 
+## Version 5 — Health Checks
+
+**Features added**
+- New "Health Checks" section below Flow Metrics, using a Green / Amber / Red
+  status per check.
+- Checks implemented (deterministic, no AI):
+  1. **Renamed actions** — flags actions still using default names
+     (Compose, Condition, Scope, Apply to each, etc., with optional trailing
+     number) and reports how many.
+  2. **Scope usage** — reports whether scope actions are present and how many.
+  3. **Nested loops** — detects `Apply to each` nested inside another and
+     reports the nesting depth; warns when nested.
+  4. **Error handling** — reports scope-based Try/Catch (Configure Run After),
+     basic failure handling (Run After = Failed), or none.
+- Added `samples/sample-flow-with-issues.zip` to exercise the warning paths.
+
+**Technical changes**
+- `analyzeHealth()` / `walkHealth()` do a single recursive pass over the action
+  tree, carrying loop-nesting depth and inspecting each action's `runAfter`.
+- Default names matched via a regex built from a base-name list, comparing the
+  action key with underscores converted to spaces.
+- `renderHealthChecks()` builds status rows via DOM APIs (no innerHTML for
+  data), coloured by status class.
+
+**Known limitations**
+- No scoring yet (each check stands alone).
+- Default-name detection covers common control/data actions only, not every
+  connector's default operation name.
+- Error-handling detection keys on `runAfter` containing "Failed"; unusual
+  patterns may not be recognised.
+- "Nested loops" considers `Foreach` only (matching the metrics definition).
+
+---
+
 ## Version 4 — Flow Metrics
 
 **Features added**

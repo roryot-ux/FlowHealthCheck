@@ -24,7 +24,11 @@ When you upload a ZIP file, Flow Health Check shows you:
 - The **number of files** inside the ZIP
 - The number of **JSON files** inside the ZIP (flow definitions are JSON)
 - A list of **all the filenames**, laid out as a **folder tree**
-- **JSON files highlighted** so they're easy to spot
+- **JSON files highlighted** so they're easy to spot — click one to view it
+- **Flow Metrics** for a Power Automate export: flow name, triggers, actions,
+  conditions, loops, scopes, variables initialised, and connectors used
+- **Health Checks** with a Green / Amber / Red status for renamed actions, scope
+  usage, nested loops, and error handling
 
 ---
 
@@ -50,9 +54,11 @@ You do **not** need an internet connection — it works completely offline.
 |------|----------------|
 | `index.html` | The entire application. All the code (page layout, styling, and the logic that reads ZIP files) lives in this one file. |
 | `README.md` | This file — the guide you're reading now. |
+| `CHANGELOG.md` | A version-by-version record of how the app has evolved. |
+| `samples/` | Example Power Automate export ZIPs you can upload to try the app. |
 
-That's it. The whole app is a single HTML file, which is why there's nothing to
-install.
+The whole app is a single HTML file (`index.html`), which is why there's nothing
+to install. The other files are just documentation and test samples.
 
 ---
 
@@ -86,6 +92,29 @@ Version 3 kept everything from Version 2 and added:
 - Files are opened **safely** — the contents are only displayed, never run, and
   the viewer does not analyse or change the flow (that may come later)
 
+### What Version 4 added
+
+Version 4 kept everything from Version 3 and added:
+
+- A **Flow Metrics** section of summary cards at the top of the results
+- It automatically finds and reads the Power Automate flow definition and shows
+  objective counts: **flow name, triggers, actions, conditions, loops, scopes,
+  variables initialised, and connectors used**
+- A friendly note when the ZIP isn't a recognisable flow export
+
+### What Version 5 added
+
+Version 5 kept everything from Version 4 and added:
+
+- A **Health Checks** section below the metrics, each shown as
+  **Green (good) / Amber (warning) / Red (issue)**
+- Checks: **renamed actions** (default names still in use), **scope usage**,
+  **nested loops** (with nesting depth), and **error handling**
+  (scope-based Try/Catch, basic failure handling, or none)
+- All checks are **deterministic** — no AI, and no scoring yet
+
+> A full, more technical version-by-version history lives in `CHANGELOG.md`.
+
 ---
 
 ## Your files stay private
@@ -103,11 +132,11 @@ private.
 
 Ideas that could be added later:
 
-- **Open and read the flow's JSON** to report on the actual flow (triggers, actions, connectors)
-- **Highlight governance issues** (e.g. missing descriptions, hard-coded values, risky connectors)
+- **A health score** summarising the checks into a single rating
+- **More health checks** (e.g. missing descriptions, hard-coded values, risky
+  connectors, `Do until` / `Switch` handling)
 - Show the **size** of each file inside the ZIP
 - A **breakdown by file type** (how many JSON files, images, documents, etc.)
-- **Click a JSON file to preview** its contents
 - **Search or filter** the file list
 - **Warnings** for common problems (empty ZIP, missing expected files, etc.)
 - **Export** the results as a report

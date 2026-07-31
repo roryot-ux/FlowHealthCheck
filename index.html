@@ -213,6 +213,64 @@
     color: var(--muted);
   }
 
+  /* Health Checks */
+  .health-section { display: none; margin-bottom: 8px; }
+  .health-section.show { display: block; }
+
+  .health-item {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border: 1px solid var(--card-border);
+    border-left-width: 4px;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    background: rgba(148, 163, 184, 0.06);
+  }
+
+  .health-item .dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 5px;
+  }
+
+  .health-item .h-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+
+  .health-item .h-detail {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .health-item.good  { border-left-color: var(--success); }
+  .health-item.warn  { border-left-color: #f59e0b; }
+  .health-item.issue { border-left-color: var(--danger); }
+
+  .health-item.good  .dot { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.6); }
+  .health-item.warn  .dot { background: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.6); }
+  .health-item.issue .dot { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.6); }
+
+  .health-item .h-status {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: auto;
+    flex: none;
+    padding-left: 10px;
+  }
+
+  .health-item.good  .h-status { color: var(--success); }
+  .health-item.warn  .h-status { color: #f59e0b; }
+  .health-item.issue .h-status { color: var(--danger); }
+
   .error-banner {
     display: none;
     align-items: center;
@@ -449,6 +507,12 @@
         </div>
       </div>
 
+      <!-- Health Checks (only shown when a Power Automate flow is detected) -->
+      <div class="health-section" id="healthSection">
+        <div class="section-title">Health Checks</div>
+        <div id="healthChecks"></div>
+      </div>
+
       <div class="metrics-none" id="metricsNone">
         ℹ️ No Power Automate flow definition was found in this ZIP, so flow
         metrics aren't available. File details are shown below.
@@ -513,6 +577,8 @@
   const mScopes = document.getElementById("mScopes");
   const mVariables = document.getElementById("mVariables");
   const mConnectors = document.getElementById("mConnectors");
+  const healthSection = document.getElementById("healthSection");
+  const healthChecksEl = document.getElementById("healthChecks");
 
   // Holds the currently loaded ZIP so JSON files can be read on click.
   let currentBuffer = null;
@@ -795,6 +861,7 @@
   async function showFlowMetrics(buffer, jsonFiles) {
     metricsSection.classList.remove("show");
     metricsNone.classList.remove("show");
+    healthSection.classList.remove("show");
 
     let flow = null;
     try {
@@ -818,6 +885,9 @@
     mVariables.textContent = m.variables.toLocaleString();
     mConnectors.textContent = m.connectors.toLocaleString();
     metricsSection.classList.add("show");
+
+    renderHealthChecks(flow.definition);
+    healthSection.classList.add("show");
   }
 
   /**
@@ -998,6 +1068,185 @@
   function fileBaseName(path) {
     const base = path.split("/").filter(Boolean).pop() || path;
     return base.replace(/\.json$/i, "");
+  }
+
+  // ---- Health checks (deterministic — no AI) -----------------------------
+
+  // Default action names Power Automate assigns before you rename them.
+  // Compared against the action key with underscores turned into spaces,
+  // optionally followed by a number (e.g. "Compose 2").
+  const DEFAULT_NAME_BASES = [
+    "Compose", "Condition", "Scope", "Apply to each", "Switch",
+    "Do until", "Until", "Parse JSON", "Filter array", "Select",
+    "Initialize variable", "Set variable", "Increment variable",
+    "Decrement variable", "Append to string variable",
+    "Append to array variable", "HTTP", "Delay", "Terminate",
+  ];
+  const DEFAULT_NAME_RE = new RegExp(
+    "^(" + DEFAULT_NAME_BASES.map(escapeRegExp).join("|") + ")( \\d+)?$", "i"
+  );
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function isDefaultActionName(displayName) {
+    return DEFAULT_NAME_RE.test(displayName.trim());
+  }
+
+  /**
+   * Walks the action tree once and gathers everything the health
+   * checks need: default-named actions, scope count, deepest loop
+   * nesting, and whether any Run After = Failed handling exists.
+   */
+  function analyzeHealth(definition) {
+    const ctx = {
+      unrenamed: 0,
+      unrenamedNames: [],
+      scopes: 0,
+      maxForeachDepth: 0,
+      scopeBased: false,
+      basic: false,
+    };
+    walkHealth(definition.actions, ctx, 0);
+    return ctx;
+  }
+
+  function walkHealth(actions, ctx, foreachDepth) {
+    if (!actions || typeof actions !== "object") return;
+    for (const key of Object.keys(actions)) {
+      const a = actions[key];
+      if (!a || typeof a !== "object") continue;
+      const type = (a.type || "").toLowerCase();
+      const display = key.replace(/_/g, " ");
+
+      if (isDefaultActionName(display)) {
+        ctx.unrenamed++;
+        if (ctx.unrenamedNames.length < 8) ctx.unrenamedNames.push(display);
+      }
+
+      if (type === "scope") ctx.scopes++;
+
+      // Run After error handling: any predecessor mapped to "Failed".
+      if (runAfterHasFailed(a.runAfter)) {
+        if (type === "scope") ctx.scopeBased = true;
+        else ctx.basic = true;
+      }
+
+      // Track loop nesting depth.
+      let depth = foreachDepth;
+      if (type === "foreach") {
+        depth = foreachDepth + 1;
+        if (depth > ctx.maxForeachDepth) ctx.maxForeachDepth = depth;
+      }
+
+      // Recurse into every container that can hold nested actions.
+      walkHealth(a.actions, ctx, depth);
+      if (a.else) walkHealth(a.else.actions, ctx, depth);
+      if (a.default) walkHealth(a.default.actions, ctx, depth);
+      if (a.cases && typeof a.cases === "object") {
+        for (const c of Object.values(a.cases)) {
+          if (c) walkHealth(c.actions, ctx, depth);
+        }
+      }
+    }
+  }
+
+  function runAfterHasFailed(runAfter) {
+    if (!runAfter || typeof runAfter !== "object") return false;
+    for (const statuses of Object.values(runAfter)) {
+      if (Array.isArray(statuses) &&
+          statuses.some(s => String(s).toLowerCase() === "failed")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function renderHealthChecks(definition) {
+    const h = analyzeHealth(definition);
+    const checks = [];
+
+    // 1. Renamed actions
+    if (h.unrenamed === 0) {
+      checks.push(mkCheck("good", "Renamed actions",
+        "All actions appear to have been renamed from their defaults."));
+    } else {
+      const eg = h.unrenamedNames.slice(0, 5).join(", ");
+      checks.push(mkCheck("warn", "Renamed actions",
+        h.unrenamed + " action(s) appear to still use default names" +
+        (eg ? " (e.g. " + eg + ")" : "") + "."));
+    }
+
+    // 2. Scope usage
+    if (h.scopes > 0) {
+      checks.push(mkCheck("good", "Scope usage",
+        h.scopes + " scope action(s) present."));
+    } else {
+      checks.push(mkCheck("warn", "Scope usage",
+        "No scope actions found — consider grouping related steps into scopes."));
+    }
+
+    // 3. Nested loops
+    if (h.maxForeachDepth >= 2) {
+      checks.push(mkCheck("warn", "Nested loops",
+        "Nested 'Apply to each' loops detected (nesting depth " +
+        h.maxForeachDepth + "). Nested loops can hurt performance."));
+    } else if (h.maxForeachDepth === 1) {
+      checks.push(mkCheck("good", "Nested loops",
+        "Loops present but not nested (nesting depth 1)."));
+    } else {
+      checks.push(mkCheck("good", "Nested loops",
+        "No 'Apply to each' loops found."));
+    }
+
+    // 4. Error handling
+    if (h.scopeBased) {
+      checks.push(mkCheck("good", "Error handling",
+        "Scope-based error handling (Try/Catch via Configure Run After) detected."));
+    } else if (h.basic) {
+      checks.push(mkCheck("warn", "Error handling",
+        "Basic failure handling detected (an action runs on Run After = Failed)."));
+    } else {
+      checks.push(mkCheck("issue", "Error handling",
+        "No error handling detected — nothing runs when an action fails."));
+    }
+
+    healthChecksEl.innerHTML = "";
+    for (const c of checks) healthChecksEl.appendChild(buildHealthItem(c));
+  }
+
+  function mkCheck(status, title, detail) {
+    return { status, title, detail };
+  }
+
+  const STATUS_LABEL = { good: "Good", warn: "Warning", issue: "Issue" };
+
+  function buildHealthItem(c) {
+    const item = document.createElement("div");
+    item.className = "health-item " + c.status;
+
+    const dot = document.createElement("span");
+    dot.className = "dot";
+
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "h-title";
+    title.textContent = c.title;
+    const detail = document.createElement("div");
+    detail.className = "h-detail";
+    detail.textContent = c.detail;
+    body.appendChild(title);
+    body.appendChild(detail);
+
+    const status = document.createElement("span");
+    status.className = "h-status";
+    status.textContent = STATUS_LABEL[c.status] || "";
+
+    item.appendChild(dot);
+    item.appendChild(body);
+    item.appendChild(status);
+    return item;
   }
 
   // ---- JSON viewer -------------------------------------------------------
