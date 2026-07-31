@@ -7,6 +7,39 @@ server, and no external libraries — everything runs locally in the browser.
 
 ---
 
+## Version 4 — Flow Metrics
+
+**Features added**
+- New "Flow Metrics" section of summary cards at the top of the results.
+- Automatically locates and reads the Power Automate flow definition JSON.
+- Reports objective counts: flow name, triggers, actions, conditions, loops
+  (Apply to each / Foreach), scope actions, variables initialised, and
+  connectors used.
+- Shows a friendly note when the ZIP isn't a recognisable flow export.
+- Added `samples/sample-flow-export.zip` for testing.
+
+**Technical changes**
+- `locateFlowDefinition()` scans JSON entries and resolves the definition from
+  both export shapes: package (`properties.definition`) and Dataverse/solution
+  (`workflows/*.json` with a stringified `clientdata`).
+- `analyzeFlow()` / `walkActions()` recurse the action tree, descending into
+  Scope, If (`else`), Foreach/Until, and Switch (`cases`/`default`).
+- Connectors are collected from action/trigger `inputs.host` and from
+  `connectionReferences`, then normalised (strip `shared_` prefix and guid-style
+  suffixes) and de-duplicated via a Set.
+- Reuses the V3 `extractEntryBytes()` decompressor to read the JSON.
+
+**Known limitations**
+- Objective counts only — no governance analysis yet.
+- "Conditions" counts `If` and "loops" counts `Foreach` only (per spec); `Switch`
+  and `Until` are not counted as conditions/loops.
+- "Actions" is the total of all action nodes, including control actions
+  (scopes, conditions, loops).
+- Connector detection is best-effort and may miscount unusual/custom connector
+  id formats.
+
+---
+
 ## Version 3 — JSON Viewer
 
 **Features added**

@@ -143,6 +143,76 @@
     max-width: 60%;
   }
 
+  /* Flow Metrics */
+  .metrics-section { display: none; margin-bottom: 8px; }
+  .metrics-section.show { display: block; }
+
+  .metrics-none {
+    display: none;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--card-border);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 12px 14px;
+    border-radius: 12px;
+    margin-bottom: 4px;
+  }
+
+  .metrics-none.show { display: block; }
+
+  .metric-card {
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+
+  .metric-name {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, rgba(99,102,241,0.16), rgba(168,85,247,0.12));
+    border-color: rgba(129, 140, 248, 0.4);
+  }
+
+  .metric-flowname {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    word-break: break-word;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 10px;
+  }
+
+  .metrics-grid .metric-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: center;
+    align-items: center;
+    padding: 14px 10px;
+  }
+
+  .metric-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--accent-hover);
+    line-height: 1.1;
+  }
+
+  .metric-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
   .error-banner {
     display: none;
     align-items: center;
@@ -340,6 +410,50 @@
     <input type="file" id="fileInput" accept=".zip,application/zip,application/x-zip-compressed" />
 
     <div class="result" id="result">
+      <!-- Flow Metrics (only shown when a Power Automate flow is detected) -->
+      <div class="metrics-section" id="metricsSection">
+        <div class="section-title">Flow Metrics</div>
+        <div class="metric-card metric-name">
+          <span class="metric-label">Flow name</span>
+          <span class="metric-flowname" id="mFlowName">—</span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-value" id="mTriggers">0</span>
+            <span class="metric-label">Triggers</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mActions">0</span>
+            <span class="metric-label">Actions</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mConditions">0</span>
+            <span class="metric-label">Conditions</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mLoops">0</span>
+            <span class="metric-label">Loops</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mScopes">0</span>
+            <span class="metric-label">Scopes</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mVariables">0</span>
+            <span class="metric-label">Variables init.</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-value" id="mConnectors">0</span>
+            <span class="metric-label">Connectors</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics-none" id="metricsNone">
+        ℹ️ No Power Automate flow definition was found in this ZIP, so flow
+        metrics aren't available. File details are shown below.
+      </div>
+
       <div class="success-banner">
         <span>✅</span>
         <span>ZIP file processed successfully!</span>
@@ -389,6 +503,16 @@
   const fileCountEl = document.getElementById("fileCount");
   const jsonCountEl = document.getElementById("jsonCount");
   const treeEl = document.getElementById("tree");
+  const metricsSection = document.getElementById("metricsSection");
+  const metricsNone = document.getElementById("metricsNone");
+  const mFlowName = document.getElementById("mFlowName");
+  const mTriggers = document.getElementById("mTriggers");
+  const mActions = document.getElementById("mActions");
+  const mConditions = document.getElementById("mConditions");
+  const mLoops = document.getElementById("mLoops");
+  const mScopes = document.getElementById("mScopes");
+  const mVariables = document.getElementById("mVariables");
+  const mConnectors = document.getElementById("mConnectors");
 
   // Holds the currently loaded ZIP so JSON files can be read on click.
   let currentBuffer = null;
@@ -446,6 +570,7 @@
       jsonCountEl.textContent = jsonFiles.length.toLocaleString();
 
       renderTree(entries);
+      await showFlowMetrics(buffer, jsonFiles);
       result.classList.add("show");
     } catch (err) {
       showError("Could not read this ZIP file. It may be corrupt or invalid.");
@@ -658,6 +783,221 @@
     }
 
     return ul;
+  }
+
+  // ---- Flow metrics (Power Automate) ------------------------------------
+
+  /**
+   * Finds the flow definition in the ZIP, computes objective metrics,
+   * and populates the Flow Metrics cards. Falls back to a "not found"
+   * note if the ZIP isn't a recognisable Power Automate export.
+   */
+  async function showFlowMetrics(buffer, jsonFiles) {
+    metricsSection.classList.remove("show");
+    metricsNone.classList.remove("show");
+
+    let flow = null;
+    try {
+      flow = await locateFlowDefinition(buffer, jsonFiles);
+    } catch (err) {
+      console.error("Flow detection failed:", err);
+    }
+
+    if (!flow) {
+      metricsNone.classList.add("show");
+      return;
+    }
+
+    const m = analyzeFlow(flow.definition, flow.connectionReferences);
+    mFlowName.textContent = flow.name || "(unnamed flow)";
+    mTriggers.textContent = m.triggers.toLocaleString();
+    mActions.textContent = m.actions.toLocaleString();
+    mConditions.textContent = m.conditions.toLocaleString();
+    mLoops.textContent = m.loops.toLocaleString();
+    mScopes.textContent = m.scopes.toLocaleString();
+    mVariables.textContent = m.variables.toLocaleString();
+    mConnectors.textContent = m.connectors.toLocaleString();
+    metricsSection.classList.add("show");
+  }
+
+  /**
+   * Scans the JSON files in the ZIP for a Power Automate flow definition.
+   * Handles the package export shape (properties.definition) and the
+   * Dataverse/solution shape (workflows/*.json with stringified clientdata).
+   * Returns { definition, name, connectionReferences } or null.
+   */
+  async function locateFlowDefinition(buffer, jsonFiles) {
+    // Try the most likely files first, then any remaining JSON.
+    const preferred = jsonFiles.filter(f =>
+      /definition\.json$/i.test(f.name) ||
+      /Microsoft\.Flow\/flows\//i.test(f.name) ||
+      /\/workflows\//i.test(f.name)
+    );
+    const rest = jsonFiles.filter(f => !preferred.includes(f));
+    const ordered = preferred.concat(rest);
+
+    for (const entry of ordered) {
+      let obj;
+      try {
+        const bytes = await extractEntryBytes(buffer, entry);
+        obj = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+      } catch {
+        continue; // not readable / not valid JSON — skip
+      }
+
+      const found = resolveDefinition(obj);
+      if (found) {
+        found.name = found.name || fileBaseName(entry.name);
+        return found;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Given a parsed JSON object, returns the embedded flow definition
+   * (the part holding triggers/actions) plus a display name, or null.
+   */
+  function resolveDefinition(obj) {
+    if (!obj || typeof obj !== "object") return null;
+
+    // Package export: { properties: { definition, displayName, connectionReferences } }
+    if (obj.properties && obj.properties.definition &&
+        hasTriggersOrActions(obj.properties.definition)) {
+      return {
+        definition: obj.properties.definition,
+        name: obj.properties.displayName || obj.name,
+        connectionReferences: obj.properties.connectionReferences,
+      };
+    }
+
+    // Dataverse/solution: { name, clientdata: "<stringified json>" }
+    if (typeof obj.clientdata === "string") {
+      try {
+        const cd = JSON.parse(obj.clientdata);
+        const inner = resolveDefinition(cd);
+        if (inner) {
+          inner.name = inner.name || obj.name;
+          return inner;
+        }
+      } catch { /* fall through */ }
+    }
+
+    // Some shapes nest under .definition directly.
+    if (obj.definition && hasTriggersOrActions(obj.definition)) {
+      return {
+        definition: obj.definition,
+        name: obj.displayName || obj.name,
+        connectionReferences: obj.connectionReferences ||
+          (obj.properties && obj.properties.connectionReferences),
+      };
+    }
+
+    // Bare definition object.
+    if (hasTriggersOrActions(obj)) {
+      return { definition: obj, name: obj.name, connectionReferences: undefined };
+    }
+
+    return null;
+  }
+
+  function hasTriggersOrActions(d) {
+    return d && typeof d === "object" &&
+      (typeof d.triggers === "object" || typeof d.actions === "object");
+  }
+
+  /**
+   * Computes objective counts by walking the definition's action tree.
+   * Actions can be nested inside Scope, If (condition), Foreach/Until,
+   * and Switch, so the walk recurses through all of them.
+   */
+  function analyzeFlow(definition, connectionReferences) {
+    const acc = {
+      triggers: 0, actions: 0, conditions: 0, loops: 0,
+      scopes: 0, variables: 0, connectors: 0,
+    };
+    const connectors = new Set();
+
+    // Triggers (top-level only) — also a source of connectors.
+    if (definition.triggers && typeof definition.triggers === "object") {
+      for (const key of Object.keys(definition.triggers)) {
+        acc.triggers++;
+        collectConnector(definition.triggers[key], connectors);
+      }
+    }
+
+    walkActions(definition.actions, acc, connectors);
+
+    // Connectors declared in connection references (if present).
+    collectConnectionReferences(connectionReferences, connectors);
+
+    acc.connectors = connectors.size;
+    return acc;
+  }
+
+  function walkActions(actions, acc, connectors) {
+    if (!actions || typeof actions !== "object") return;
+    for (const key of Object.keys(actions)) {
+      const a = actions[key];
+      if (!a || typeof a !== "object") continue;
+
+      acc.actions++;
+      const type = (a.type || "").toLowerCase();
+      if (type === "if") acc.conditions++;
+      else if (type === "foreach") acc.loops++;
+      else if (type === "scope") acc.scopes++;
+      else if (type === "initializevariable") acc.variables++;
+
+      collectConnector(a, connectors);
+
+      // Recurse into every place actions can be nested.
+      walkActions(a.actions, acc, connectors);
+      if (a.else) walkActions(a.else.actions, acc, connectors);
+      if (a.default) walkActions(a.default.actions, acc, connectors);
+      if (a.cases && typeof a.cases === "object") {
+        for (const c of Object.values(a.cases)) {
+          if (c) walkActions(c.actions, acc, connectors);
+        }
+      }
+    }
+  }
+
+  // Pulls a connector id from an action/trigger's host info, if any.
+  function collectConnector(node, connectors) {
+    const host = node && node.inputs && node.inputs.host;
+    if (!host) return;
+    const id = host.apiId || (host.api && (host.api.name || host.api.id)) ||
+      host.connectionName;
+    const norm = normalizeConnector(id);
+    if (norm) connectors.add(norm);
+  }
+
+  function collectConnectionReferences(refs, connectors) {
+    if (!refs || typeof refs !== "object") return;
+    for (const ref of Object.values(refs)) {
+      if (!ref || typeof ref !== "object") continue;
+      const id = (ref.api && (ref.api.name || ref.api.id)) ||
+        ref.apiId || ref.connectionName || ref.id;
+      const norm = normalizeConnector(id);
+      if (norm) connectors.add(norm);
+    }
+  }
+
+  // Reduces a connector id/path to a stable name, e.g.
+  // ".../apis/shared_sharepointonline" -> "sharepointonline".
+  function normalizeConnector(value) {
+    if (!value) return null;
+    let x = String(value);
+    if (x.includes("/")) x = x.split("/").filter(Boolean).pop();
+    x = x.toLowerCase()
+      .replace(/^shared_/, "")
+      .replace(/[-_][0-9a-f]{6,}$/, ""); // drop guid-ish instance suffixes
+    return x || null;
+  }
+
+  function fileBaseName(path) {
+    const base = path.split("/").filter(Boolean).pop() || path;
+    return base.replace(/\.json$/i, "");
   }
 
   // ---- JSON viewer -------------------------------------------------------
