@@ -28,7 +28,8 @@ When you upload a ZIP file, Flow Health Check shows you:
 - **Flow Metrics** for a Power Automate export: flow name, triggers, actions,
   conditions, loops, scopes, variables initialised, and connectors used
 - **Health Checks** with a Green / Amber / Red status for renamed actions, scope
-  usage, nested loops, and error handling
+  usage, nested loops, and error handling — each card **expands** to show the
+  exact items behind its result
 
 ---
 
@@ -112,6 +113,17 @@ Version 5 kept everything from Version 4 and added:
   **nested loops** (with nesting depth), and **error handling**
   (scope-based Try/Catch, basic failure handling, or none)
 - All checks are **deterministic** — no AI, and no scoring yet
+
+### What Version 6 added
+
+Version 6 kept everything from Version 5 and added:
+
+- Each Health Check card is now **expandable** (collapsed by default) with a
+  ▶ / ▼ indicator — click the header to open or close it
+- Expanding a card shows the **exact items** behind its result: the
+  default-named actions, the detected scopes, each loop and its nesting depth,
+  or the scopes/actions that provide error handling
+- Green checks expand too, showing a short explanation
 
 > A full, more technical version-by-version history lives in `CHANGELOG.md`.
 

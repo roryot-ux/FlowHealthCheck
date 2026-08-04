@@ -218,15 +218,32 @@
   .health-section.show { display: block; }
 
   .health-item {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    padding: 12px 14px;
     border: 1px solid var(--card-border);
     border-left-width: 4px;
     border-radius: 10px;
     margin-bottom: 8px;
     background: rgba(148, 163, 184, 0.06);
+    overflow: hidden;
+  }
+
+  .h-header {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .h-header:hover { background: rgba(148, 163, 184, 0.08); }
+  .h-header:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .caret {
+    flex: none;
+    width: 12px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--muted);
   }
 
   .health-item .dot {
@@ -234,20 +251,54 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    margin-top: 5px;
   }
 
-  .health-item .h-title {
-    font-weight: 600;
-    font-size: 14px;
-    margin-bottom: 2px;
-  }
+  .h-head-text { flex: 1 1 auto; min-width: 0; }
 
-  .health-item .h-detail {
+  .h-title { font-weight: 600; font-size: 14px; }
+
+  .h-summary {
     font-size: 13px;
     color: var(--muted);
-    line-height: 1.5;
+    line-height: 1.4;
+    margin-top: 2px;
   }
+
+  .h-status {
+    flex: none;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-left: 10px;
+  }
+
+  /* Collapsible details, animated via max-height */
+  .h-details {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+  }
+
+  .h-details-body { padding: 0 14px 12px 38px; }
+
+  .h-detail-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--card-border);
+  }
+
+  .h-detail-list li {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 12.5px;
+    color: var(--text);
+    padding: 6px 2px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    word-break: break-word;
+  }
+
+  .h-detail-list li:last-child { border-bottom: none; }
 
   .health-item.good  { border-left-color: var(--success); }
   .health-item.warn  { border-left-color: #f59e0b; }
@@ -256,16 +307,6 @@
   .health-item.good  .dot { background: var(--success); box-shadow: 0 0 8px rgba(34,197,94,0.6); }
   .health-item.warn  .dot { background: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.6); }
   .health-item.issue .dot { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.6); }
-
-  .health-item .h-status {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-left: auto;
-    flex: none;
-    padding-left: 10px;
-  }
 
   .health-item.good  .h-status { color: var(--success); }
   .health-item.warn  .h-status { color: #f59e0b; }
@@ -1095,18 +1136,18 @@
   }
 
   /**
-   * Walks the action tree once and gathers everything the health
-   * checks need: default-named actions, scope count, deepest loop
-   * nesting, and whether any Run After = Failed handling exists.
+   * Walks the action tree once and gathers the exact items each health
+   * check needs to explain itself when expanded: the default-named
+   * actions, every scope, every loop with its nesting depth, and every
+   * action/scope that runs after a failure.
    */
   function analyzeHealth(definition) {
     const ctx = {
-      unrenamed: 0,
-      unrenamedNames: [],
-      scopes: 0,
+      unrenamedNames: [], // keys of actions still using default names
+      scopeNames: [],     // keys of Scope actions
+      loops: [],          // { name, depth } for each Apply to each / Foreach
       maxForeachDepth: 0,
-      scopeBased: false,
-      basic: false,
+      errorHandlers: [],  // { name, kind: "scope" | "action" }
     };
     walkHealth(definition.actions, ctx, 0);
     return ctx;
@@ -1120,23 +1161,19 @@
       const type = (a.type || "").toLowerCase();
       const display = key.replace(/_/g, " ");
 
-      if (isDefaultActionName(display)) {
-        ctx.unrenamed++;
-        if (ctx.unrenamedNames.length < 8) ctx.unrenamedNames.push(display);
-      }
-
-      if (type === "scope") ctx.scopes++;
+      if (isDefaultActionName(display)) ctx.unrenamedNames.push(key);
+      if (type === "scope") ctx.scopeNames.push(key);
 
       // Run After error handling: any predecessor mapped to "Failed".
       if (runAfterHasFailed(a.runAfter)) {
-        if (type === "scope") ctx.scopeBased = true;
-        else ctx.basic = true;
+        ctx.errorHandlers.push({ name: key, kind: type === "scope" ? "scope" : "action" });
       }
 
-      // Track loop nesting depth.
+      // Track loop nesting depth, recording each loop's own depth.
       let depth = foreachDepth;
       if (type === "foreach") {
         depth = foreachDepth + 1;
+        ctx.loops.push({ name: key, depth });
         if (depth > ctx.maxForeachDepth) ctx.maxForeachDepth = depth;
       }
 
@@ -1167,85 +1204,195 @@
     const h = analyzeHealth(definition);
     const checks = [];
 
-    // 1. Renamed actions
-    if (h.unrenamed === 0) {
-      checks.push(mkCheck("good", "Renamed actions",
-        "All actions appear to have been renamed from their defaults."));
+    // 1. Renamed actions — list the exact default-named actions.
+    if (h.unrenamedNames.length === 0) {
+      checks.push({
+        status: "good",
+        title: "Renamed actions",
+        summary: "All actions appear to have been renamed",
+        details: ["No default action names (Compose, Condition, Scope, Apply to each, …) were found."],
+      });
     } else {
-      const eg = h.unrenamedNames.slice(0, 5).join(", ");
-      checks.push(mkCheck("warn", "Renamed actions",
-        h.unrenamed + " action(s) appear to still use default names" +
-        (eg ? " (e.g. " + eg + ")" : "") + "."));
+      checks.push({
+        status: "warning",
+        title: "Renamed actions",
+        summary: h.unrenamedNames.length + " action(s) use default names",
+        details: h.unrenamedNames.slice(),
+      });
     }
 
-    // 2. Scope usage
-    if (h.scopes > 0) {
-      checks.push(mkCheck("good", "Scope usage",
-        h.scopes + " scope action(s) present."));
+    // 2. Scope usage — list the detected scopes.
+    if (h.scopeNames.length > 0) {
+      checks.push({
+        status: "good",
+        title: "Scope usage",
+        summary: h.scopeNames.length + " scope action(s) present",
+        details: h.scopeNames.slice(),
+      });
     } else {
-      checks.push(mkCheck("warn", "Scope usage",
-        "No scope actions found — consider grouping related steps into scopes."));
+      checks.push({
+        status: "warning",
+        title: "Scope usage",
+        summary: "No scope actions found",
+        details: [
+          "No Scope actions are used in this flow.",
+          "Consider grouping related steps into scopes for readability and error handling.",
+        ],
+      });
     }
 
-    // 3. Nested loops
+    // 3. Nested loops — list loops with their nesting depth.
     if (h.maxForeachDepth >= 2) {
-      checks.push(mkCheck("warn", "Nested loops",
-        "Nested 'Apply to each' loops detected (nesting depth " +
-        h.maxForeachDepth + "). Nested loops can hurt performance."));
+      checks.push({
+        status: "warning",
+        title: "Nested loops",
+        summary: "Nested loops detected (nesting depth " + h.maxForeachDepth + ")",
+        details: loopDetails(h.loops),
+      });
     } else if (h.maxForeachDepth === 1) {
-      checks.push(mkCheck("good", "Nested loops",
-        "Loops present but not nested (nesting depth 1)."));
+      checks.push({
+        status: "good",
+        title: "Nested loops",
+        summary: "Loops present but not nested (nesting depth 1)",
+        details: loopDetails(h.loops),
+      });
     } else {
-      checks.push(mkCheck("good", "Nested loops",
-        "No 'Apply to each' loops found."));
+      checks.push({
+        status: "good",
+        title: "Nested loops",
+        summary: "No 'Apply to each' loops found",
+        details: ["No 'Apply to each' loops are used in this flow."],
+      });
     }
 
-    // 4. Error handling
-    if (h.scopeBased) {
-      checks.push(mkCheck("good", "Error handling",
-        "Scope-based error handling (Try/Catch via Configure Run After) detected."));
-    } else if (h.basic) {
-      checks.push(mkCheck("warn", "Error handling",
-        "Basic failure handling detected (an action runs on Run After = Failed)."));
+    // 4. Error handling — list the handlers, or explain why none was found.
+    const scopeHandlers = h.errorHandlers.filter(x => x.kind === "scope");
+    const actionHandlers = h.errorHandlers.filter(x => x.kind === "action");
+    if (scopeHandlers.length > 0) {
+      checks.push({
+        status: "good",
+        title: "Error handling",
+        summary: "Scope-based error handling detected",
+        details: h.errorHandlers.map(errorHandlerLine),
+      });
+    } else if (actionHandlers.length > 0) {
+      checks.push({
+        status: "warning",
+        title: "Error handling",
+        summary: "Basic failure handling detected",
+        details: h.errorHandlers.map(errorHandlerLine),
+      });
     } else {
-      checks.push(mkCheck("issue", "Error handling",
-        "No error handling detected — nothing runs when an action fails."));
+      checks.push({
+        status: "issue",
+        title: "Error handling",
+        summary: "No error handling detected",
+        details: [
+          "No action or scope is configured to run when a previous step fails.",
+          "None of the steps use 'Configure Run After' with the Failed status.",
+          "Consider adding a Try/Catch scope or a failure-notification action.",
+        ],
+      });
     }
 
     healthChecksEl.innerHTML = "";
     for (const c of checks) healthChecksEl.appendChild(buildHealthItem(c));
   }
 
-  function mkCheck(status, title, detail) {
-    return { status, title, detail };
+  function loopDetails(loops) {
+    if (!loops.length) return ["No loops found."];
+    return loops.map(l => l.name + " — nesting depth " + l.depth);
   }
 
-  const STATUS_LABEL = { good: "Good", warn: "Warning", issue: "Issue" };
+  function errorHandlerLine(x) {
+    return x.name + (x.kind === "scope"
+      ? " (scope — runs after a failure)"
+      : " (action — runs after a failure)");
+  }
 
+  // Maps the check status to a CSS class and the badge label.
+  const STATUS_META = {
+    good:    { cls: "good",  label: "Good" },
+    warning: { cls: "warn",  label: "Warning" },
+    issue:   { cls: "issue", label: "Issue" },
+  };
+
+  /**
+   * Builds one collapsible health card. Collapsed by default; the header
+   * toggles it open with a smooth max-height transition. Detail lines are
+   * rendered with textContent so flow data can't inject markup.
+   */
   function buildHealthItem(c) {
+    const meta = STATUS_META[c.status] || STATUS_META.good;
+
     const item = document.createElement("div");
-    item.className = "health-item " + c.status;
+    item.className = "health-item " + meta.cls;
+
+    // Header (clickable / focusable)
+    const header = document.createElement("div");
+    header.className = "h-header";
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+    header.setAttribute("aria-expanded", "false");
+
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "▶";
 
     const dot = document.createElement("span");
     dot.className = "dot";
 
-    const body = document.createElement("div");
+    const headText = document.createElement("div");
+    headText.className = "h-head-text";
     const title = document.createElement("div");
     title.className = "h-title";
     title.textContent = c.title;
-    const detail = document.createElement("div");
-    detail.className = "h-detail";
-    detail.textContent = c.detail;
-    body.appendChild(title);
-    body.appendChild(detail);
+    const summary = document.createElement("div");
+    summary.className = "h-summary";
+    summary.textContent = c.summary;
+    headText.appendChild(title);
+    headText.appendChild(summary);
 
     const status = document.createElement("span");
     status.className = "h-status";
-    status.textContent = STATUS_LABEL[c.status] || "";
+    status.textContent = meta.label;
 
-    item.appendChild(dot);
-    item.appendChild(body);
-    item.appendChild(status);
+    header.appendChild(caret);
+    header.appendChild(dot);
+    header.appendChild(headText);
+    header.appendChild(status);
+
+    // Collapsible details
+    const details = document.createElement("div");
+    details.className = "h-details";
+    const body = document.createElement("div");
+    body.className = "h-details-body";
+    const list = document.createElement("ul");
+    list.className = "h-detail-list";
+    for (const line of (c.details || [])) {
+      const li = document.createElement("li");
+      li.textContent = line;
+      list.appendChild(li);
+    }
+    body.appendChild(list);
+    details.appendChild(body);
+
+    function toggle() {
+      const open = item.classList.toggle("open");
+      header.setAttribute("aria-expanded", open ? "true" : "false");
+      caret.textContent = open ? "▼" : "▶";
+      details.style.maxHeight = open ? body.offsetHeight + "px" : "0px";
+    }
+    header.addEventListener("click", toggle);
+    header.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+
+    item.appendChild(header);
+    item.appendChild(details);
     return item;
   }
 

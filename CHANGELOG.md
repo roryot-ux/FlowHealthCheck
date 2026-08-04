@@ -7,6 +7,39 @@ server, and no external libraries — everything runs locally in the browser.
 
 ---
 
+## Version 6 — Expandable Health Checks
+
+**Features added**
+- Each Health Check card is now **expandable**, collapsed by default, with a
+  ▶ / ▼ indicator; clicking (or Enter/Space on) the header toggles it.
+- Expanding a card reveals the exact items behind its status:
+  1. **Renamed actions** — the action names still using default names.
+  2. **Scope usage** — the names of the detected scopes.
+  3. **Nested loops** — each loop with its nesting depth.
+  4. **Error handling** — the scopes/actions providing handling, or an
+     explanation of why the check has no handling to show.
+- Green checks are expandable too (they show a short explanation).
+
+**Technical changes**
+- `analyzeHealth()` / `walkHealth()` now collect item lists instead of just
+  counts: `unrenamedNames`, `scopeNames`, `loops` (`{name, depth}`), and
+  `errorHandlers` (`{name, kind}`).
+- Each check now returns `{ status, summary, details[] }`; `status` is
+  `good` / `warning` / `issue` (mapped to the existing colour classes).
+- `buildHealthItem()` rebuilt as a collapsible card: clickable header +
+  details list, animated with a CSS `max-height` transition, keyboard
+  accessible via `aria-expanded`. Detail lines use `textContent` (no markup
+  injection). No external libraries.
+
+**Known limitations**
+- Still no scoring (each check stands alone).
+- Detail lines list raw action keys (underscored) as they appear in the
+  definition JSON.
+- Carries forward the V5 detection limits (default-name coverage,
+  `Failed`-based error-handling detection, `Foreach`-only loops).
+
+---
+
 ## Version 5 — Health Checks
 
 **Features added**
