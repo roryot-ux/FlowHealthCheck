@@ -377,27 +377,37 @@
     font-weight: 600;
   }
 
+  .node.xml {
+    color: #7dd3fc;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    font-weight: 600;
+  }
+
   .badge {
     display: inline-block;
     margin-left: 8px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.04em;
-    color: #713f12;
-    background: #fde047;
     border-radius: 5px;
     padding: 0 6px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
 
-  .node.clickable { cursor: pointer; transition: background 0.15s; }
-  .node.clickable:hover,
-  .node.clickable:focus-visible {
-    background: rgba(250, 204, 21, 0.22);
-    outline: none;
-  }
+  .badge.json { color: #713f12; background: #fde047; }
+  .badge.xml  { color: #082f49; background: #7dd3fc; }
 
-  /* JSON viewer modal */
+  .node.clickable { cursor: pointer; transition: background 0.15s; }
+  .node.clickable:focus-visible { outline: none; }
+
+  .node.json.clickable:hover,
+  .node.json.clickable:focus-visible { background: rgba(250, 204, 21, 0.22); }
+
+  .node.xml.clickable:hover,
+  .node.xml.clickable:focus-visible { background: rgba(56, 189, 248, 0.22); }
+
+  /* File viewer modal (JSON and XML) */
   .viewer {
     display: none;
     position: fixed;
@@ -475,7 +485,8 @@
 
   .viewer-loading { color: var(--muted); font-size: 14px; }
 
-  pre.json {
+  pre.json,
+  pre.xml {
     margin: 0;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 13px;
@@ -485,12 +496,18 @@
     color: var(--text);
   }
 
-  /* Syntax highlighting */
+  /* Syntax highlighting — JSON */
   .tok-key  { color: #7dd3fc; }
   .tok-str  { color: #86efac; }
   .tok-num  { color: #fca5a5; }
   .tok-bool { color: #c4b5fd; }
   .tok-null { color: #94a3b8; font-style: italic; }
+
+  /* Syntax highlighting — XML */
+  .tok-tag     { color: #7dd3fc; }
+  .tok-attr    { color: #c4b5fd; }
+  .tok-val     { color: #86efac; }
+  .tok-comment { color: #94a3b8; font-style: italic; }
 </style>
 </head>
 <body>
@@ -586,7 +603,7 @@
     </div>
   </div>
 
-  <!-- JSON viewer modal -->
+  <!-- File viewer modal (JSON and XML) -->
   <div class="viewer" id="viewer">
     <div class="viewer-panel">
       <div class="viewer-header">
@@ -621,7 +638,7 @@
   const healthSection = document.getElementById("healthSection");
   const healthChecksEl = document.getElementById("healthChecks");
 
-  // Holds the currently loaded ZIP so JSON files can be read on click.
+  // Holds the currently loaded ZIP so viewable files can be read on click.
   let currentBuffer = null;
 
   // Drag & drop handling
@@ -816,7 +833,7 @@
 
   /**
    * Builds a nested folder structure from flat ZIP paths and
-   * renders it as an indented tree, highlighting JSON files.
+   * renders it as an indented tree, highlighting viewable files.
    */
   function renderTree(entries) {
     const root = {};
@@ -842,6 +859,18 @@
     treeEl.appendChild(buildList(root));
   }
 
+  // Icon per viewable file kind; other files fall back to a plain page.
+  const FILE_ICONS = { json: "🧾", xml: "🏷️" };
+
+  // Returns the viewer kind for a filename ("json" / "xml"), or null
+  // when the file isn't one the viewer can display.
+  function fileKind(name) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".json")) return "json";
+    if (lower.endsWith(".xml")) return "xml";
+    return null;
+  }
+
   function buildList(node) {
     const ul = document.createElement("ul");
     const names = Object.keys(node).sort((a, b) => {
@@ -854,29 +883,29 @@
       const item = node[name];
       const li = document.createElement("li");
       const span = document.createElement("span");
-      const isJson = !item.__folder && name.toLowerCase().endsWith(".json");
+      const kind = item.__folder ? null : fileKind(name);
 
-      span.className = "node " + (item.__folder ? "folder" : isJson ? "file json" : "file");
+      span.className = "node " + (item.__folder ? "folder" : kind ? "file " + kind : "file");
       span.innerHTML =
-        '<span class="ico">' + (item.__folder ? "📁" : isJson ? "🧾" : "📄") + "</span>" +
+        '<span class="ico">' + (item.__folder ? "📁" : FILE_ICONS[kind] || "📄") + "</span>" +
         '<span class="name"></span>';
       span.querySelector(".name").textContent = name;
-      if (isJson) {
+      if (kind) {
         const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = "JSON";
+        badge.className = "badge " + kind;
+        badge.textContent = kind.toUpperCase();
         span.appendChild(badge);
 
-        // Clicking a JSON file opens it in the viewer.
+        // Clicking a viewable file opens it in the viewer.
         if (item.__entry) {
           span.classList.add("clickable");
           span.setAttribute("role", "button");
           span.setAttribute("tabindex", "0");
-          span.addEventListener("click", () => openJson(item.__entry));
+          span.addEventListener("click", () => openFile(item.__entry, kind));
           span.addEventListener("keydown", e => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              openJson(item.__entry);
+              openFile(item.__entry, kind);
             }
           });
         }
@@ -1396,7 +1425,7 @@
     return item;
   }
 
-  // ---- JSON viewer -------------------------------------------------------
+  // ---- File viewer (JSON and XML) ----------------------------------------
 
   const viewer = document.getElementById("viewer");
   const viewerTitle = document.getElementById("viewerTitle");
@@ -1417,7 +1446,12 @@
     viewerBody.innerHTML = "";
   }
 
-  async function openJson(entry) {
+  /**
+   * Opens a ZIP entry in the modal viewer. `kind` ("json" / "xml") picks
+   * which renderer formats and highlights the text; everything else —
+   * loading, the warning note, and error handling — is shared.
+   */
+  async function openFile(entry, kind) {
     viewerTitle.textContent = entry.name;
     viewerNote.textContent = "";
     viewerNote.className = "viewer-note";
@@ -1427,20 +1461,14 @@
     try {
       const bytes = await extractEntryBytes(currentBuffer, entry);
       const text = new TextDecoder("utf-8").decode(bytes);
+      const rendered = kind === "xml" ? renderXml(text) : renderJson(text);
 
-      let pretty;
-      try {
-        pretty = JSON.stringify(JSON.parse(text), null, 2);
-      } catch (parseErr) {
-        // Still show the file, but flag that it isn't valid JSON.
-        viewerNote.textContent =
-          "⚠️ This file could not be parsed as valid JSON — showing raw text.";
+      if (rendered.warning) {
+        viewerNote.textContent = rendered.warning;
         viewerNote.className = "viewer-note warn";
-        pretty = text;
       }
-
       viewerBody.innerHTML =
-        '<pre class="json"><code>' + syntaxHighlight(pretty) + "</code></pre>";
+        '<pre class="' + kind + '"><code>' + rendered.html + "</code></pre>";
     } catch (err) {
       viewerBody.innerHTML = "";
       viewerNote.textContent = "⚠️ Could not open this file: " + err.message;
@@ -1450,14 +1478,42 @@
   }
 
   /**
-   * Wraps JSON tokens in <span> tags for colouring. Input is escaped
-   * first so file contents can never inject HTML into the page.
+   * Pretty-prints JSON with 2-space indentation and highlights it.
+   * Invalid JSON is still shown, as raw text, with a warning.
+   * Returns { html, warning? }.
    */
-  function syntaxHighlight(json) {
-    const escaped = json
+  function renderJson(text) {
+    try {
+      return { html: highlightJson(JSON.stringify(JSON.parse(text), null, 2)) };
+    } catch (parseErr) {
+      return {
+        html: highlightJson(text),
+        warning: "⚠️ This file could not be parsed as valid JSON — showing raw text.",
+      };
+    }
+  }
+
+  /**
+   * Formats and highlights XML. Returns { html, warning? }.
+   */
+  function renderXml(text) {
+    return { html: highlightXml(formatXml(text)) };
+  }
+
+  // Escapes HTML so file contents can never inject markup into the page.
+  function escapeHtml(text) {
+    return text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+  }
+
+  /**
+   * Wraps JSON tokens in <span> tags for colouring. Input is escaped
+   * first so file contents can never inject HTML into the page.
+   */
+  function highlightJson(json) {
+    const escaped = escapeHtml(json);
 
     return escaped.replace(
       /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false)\b|\bnull\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
@@ -1472,6 +1528,76 @@
         }
         return '<span class="' + cls + '">' + match + "</span>";
       }
+    );
+  }
+
+  /**
+   * Prepares XML for display. Files that already contain line breaks keep
+   * their own indentation exactly as it is — nothing is re-flowed, so
+   * significant whitespace and CDATA blocks stay intact. Only minified,
+   * single-line XML is given one indent per nesting level, since otherwise
+   * there'd be nothing readable to show.
+   */
+  function formatXml(text) {
+    const xml = text.trim();
+    if (xml.includes("\n")) return xml;
+
+    let depth = 0;
+    return xml
+      .replace(/>\s*</g, ">\n<")
+      .split("\n")
+      .map(line => {
+        // A closing tag un-indents itself.
+        if (/^<\/[^>]/.test(line)) depth = Math.max(0, depth - 1);
+        const indented = "  ".repeat(depth) + line;
+        // An opening tag indents what follows — unless it's self-closing, a
+        // declaration/comment, or already closed on this line (<a>text</a>).
+        const opens = /^<[^!?\/]/.test(line) &&
+          !/\/>$/.test(line) &&
+          !/<\/[^>]+>$/.test(line);
+        if (opens) depth++;
+        return indented;
+      })
+      .join("\n");
+  }
+
+  // Comments, CDATA sections, and tags — matched in that order so that
+  // markup inside a comment or CDATA block isn't treated as a tag.
+  const XML_TOKEN_RE =
+    /&lt;!--[\s\S]*?--&gt;|&lt;!\[CDATA\[[\s\S]*?\]\]&gt;|&lt;[?!/]?[\w:.-][\s\S]*?&gt;/g;
+
+  /**
+   * Wraps XML tokens in <span> tags for colouring: element names,
+   * attribute names, attribute values, and comments. Input is escaped
+   * first so file contents can never inject HTML into the page. Text
+   * between tags is left in the default colour.
+   */
+  function highlightXml(xml) {
+    return escapeHtml(xml).replace(XML_TOKEN_RE, token => {
+      if (token.startsWith("&lt;!--")) {
+        return '<span class="tok-comment">' + token + "</span>";
+      }
+      // CDATA is matched only to protect it — it's shown unstyled.
+      if (token.startsWith("&lt;![CDATA[")) return token;
+      return highlightXmlTag(token);
+    });
+  }
+
+  /**
+   * Colours the inside of a single tag. Attributes are handled before the
+   * element name so the anchored name pattern can't match the class names
+   * of the <span>s inserted here.
+   */
+  function highlightXmlTag(tag) {
+    const withAttrs = tag.replace(
+      /([\w:.-]+)(\s*=\s*)("[^"]*"|'[^']*')/g,
+      (m, name, eq, value) =>
+        '<span class="tok-attr">' + name + "</span>" + eq +
+        '<span class="tok-val">' + value + "</span>"
+    );
+    return withAttrs.replace(
+      /^(&lt;[?!/]*)([\w:.-]+)/,
+      (m, open, name) => open + '<span class="tok-tag">' + name + "</span>"
     );
   }
 </script>

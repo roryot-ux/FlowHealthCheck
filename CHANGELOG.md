@@ -7,6 +7,53 @@ server, and no external libraries — everything runs locally in the browser.
 
 ---
 
+## Version 7 — XML Preview
+
+**Features added**
+- XML files are now **clickable** in the contents tree, just like JSON files —
+  highlighted with an `XML` badge (blue, to distinguish them from JSON's
+  yellow) and openable with Enter/Space as well as a click.
+- Clicking one opens it in the **same modal viewer** used for JSON, with the
+  same ✕ / backdrop / Esc close behaviour.
+- XML is shown with its **own indentation preserved** exactly as it appears in
+  the file; minified single-line XML is given one indent per nesting level so
+  it's readable.
+- Basic XML **syntax highlighting**: element names, attribute names, attribute
+  values, and comments.
+
+**Technical changes**
+- The tree's `isJson` boolean became `fileKind()`, returning `"json"`, `"xml"`
+  or `null`; the icon, badge, CSS class and click/keyboard handlers in
+  `buildList()` are all driven from that one value, so both file types share a
+  single code path.
+- `openJson()` became `openFile(entry, kind)`. The modal shell — title,
+  loading state, decompression, warning note and error handling — is shared;
+  only the formatting step branches, to `renderJson()` or `renderXml()`, each
+  returning `{ html, warning? }`. The JSON path is unchanged.
+- `formatXml()` returns files that already contain line breaks untouched, so
+  significant whitespace and CDATA survive; only single-line input is
+  re-indented, by splitting on `>\s*<` and tracking depth.
+- `highlightXml()` escapes first, then makes a single pass with one alternating
+  regex (comments | CDATA | tags) so markup inside a comment or CDATA block
+  isn't coloured as a tag. Within a tag, attributes are coloured before the
+  anchored element name, so the pattern can't match the class names of the
+  `<span>`s just inserted.
+- Extracted the shared `escapeHtml()` helper (now used by both highlighters);
+  `syntaxHighlight()` renamed to `highlightJson()`. New `.tok-tag`,
+  `.tok-attr`, `.tok-val` and `.tok-comment` colours reuse the existing
+  palette. Still no external libraries.
+
+**Known limitations**
+- Malformed XML is shown on a best-effort basis with **no warning**, unlike the
+  JSON viewer which flags files it can't parse.
+- A literal `>` inside an attribute value (valid XML, but rare) ends the tag
+  early, so that tag is coloured incorrectly. Display only — no content is lost.
+- Re-indenting minified XML is best-effort rather than a full parse, so
+  whitespace inside a comment or CDATA block in a single-line file may shift.
+- The stats still count JSON files only — there's no "XML files" count.
+
+---
+
 ## Version 6 — Expandable Health Checks
 
 **Features added**
