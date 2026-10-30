@@ -7,6 +7,45 @@ server, and no external libraries — everything runs locally in the browser.
 
 ---
 
+## Version 8 — Multi-Flow Solutions
+
+**Features added**
+- Power Platform **solution ZIPs containing multiple flows** are now supported:
+  every distinct flow in the ZIP is detected, not just the first.
+- When more than one flow is found, a **"N flows detected"** label and a
+  **dropdown** appear at the top of Flow Metrics; selecting a flow immediately
+  updates the metrics and health checks for that flow.
+- Flows are listed alphabetically; flows sharing a display name are labelled
+  with their source file path so they can be told apart.
+- Single-flow ZIPs keep the existing experience — no selector is shown.
+- Tested with a solution containing 17 flows.
+
+**Technical changes**
+- `locateFlowDefinition()` became `locateFlowDefinitions()`, returning an array
+  of `{ definition, name, label, source, connectionReferences }`. Both export
+  shapes (package `properties.definition` and solution `workflows/*.json` with
+  stringified `clientdata`) are still resolved by the unchanged
+  `resolveDefinition()`.
+- The likely flow files (`definition.json`, `Microsoft.Flow/flows/`,
+  `workflows/`) are scanned first; remaining JSON is only scanned if none of
+  those held a flow, so unrelated JSON isn't mistaken for an extra flow.
+- New `collectFlows()` de-duplicates flows by their serialised definition, so
+  the same flow stored in more than one file appears once.
+- `showFlowMetrics()` now handles discovery and the selector; rendering moved to
+  a new `renderFlow(flow)`, re-run on the dropdown's `change` event. The
+  metrics and health-check analysis itself is unchanged.
+- Small `.flow-picker` CSS block reusing the existing palette. Still no external
+  libraries; everything stays local in the browser.
+
+**Known limitations**
+- No connection-reference or environment-variable analysis yet.
+- De-duplication matches identical definitions only; two copies of a flow that
+  differ in any way are listed separately.
+- There's no summary across all flows — metrics and health checks are shown one
+  flow at a time.
+
+---
+
 ## Version 7 — XML Preview
 
 **Features added**

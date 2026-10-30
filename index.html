@@ -176,6 +176,23 @@
 
   .metrics-none.show { display: block; }
 
+  /* Flow picker (only shown when a ZIP holds more than one flow) */
+  .flow-picker { display: none; margin-bottom: 10px; }
+  .flow-picker.show { display: flex; flex-direction: column; gap: 6px; }
+
+  .flow-picker select {
+    width: 100%;
+    background: rgba(148, 163, 184, 0.06);
+    color: inherit;
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 14px;
+  }
+
+  .flow-picker select option { color: #000; }
+
   .metric-card {
     background: rgba(148, 163, 184, 0.06);
     border: 1px solid var(--card-border);
@@ -545,6 +562,10 @@
       <!-- Flow Metrics (only shown when a Power Automate flow is detected) -->
       <div class="metrics-section" id="metricsSection">
         <div class="section-title">Flow Metrics</div>
+        <div class="flow-picker" id="flowPicker">
+          <label class="metric-label" for="flowSelect" id="flowCount">0 flows detected</label>
+          <select id="flowSelect"></select>
+        </div>
         <div class="metric-card metric-name">
           <span class="metric-label">Flow name</span>
           <span class="metric-flowname" id="mFlowName">—</span>
@@ -653,6 +674,12 @@
   const mConnectors = document.getElementById("mConnectors");
   const healthSection = document.getElementById("healthSection");
   const healthChecksEl = document.getElementById("healthChecks");
+  const flowPicker = document.getElementById("flowPicker");
+  const flowCountEl = document.getElementById("flowCount");
+  const flowSelect = document.getElementById("flowSelect");
+
+  // Every distinct flow found in the currently loaded ZIP.
+  let currentFlows = [];
 
   // Holds the currently loaded ZIP so viewable files can be read on click.
   let currentBuffer = null;
@@ -948,19 +975,44 @@
     metricsSection.classList.remove("show");
     metricsNone.classList.remove("show");
     healthSection.classList.remove("show");
+    flowPicker.classList.remove("show");
+    flowSelect.innerHTML = "";
+    currentFlows = [];
 
-    let flow = null;
     try {
-      flow = await locateFlowDefinition(buffer, jsonFiles);
+      currentFlows = await locateFlowDefinitions(buffer, jsonFiles);
     } catch (err) {
       console.error("Flow detection failed:", err);
     }
 
-    if (!flow) {
+    if (currentFlows.length === 0) {
       metricsNone.classList.add("show");
       return;
     }
 
+    // Only offer a selector when there's actually a choice to make.
+    if (currentFlows.length > 1) {
+      flowCountEl.textContent = currentFlows.length + " flows detected";
+      currentFlows.forEach((f, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = f.label;
+        flowSelect.appendChild(opt);
+      });
+      flowSelect.value = "0";
+      flowPicker.classList.add("show");
+    }
+
+    renderFlow(currentFlows[0]);
+  }
+
+  flowSelect.addEventListener("change", () => {
+    const flow = currentFlows[Number(flowSelect.value)];
+    if (flow) renderFlow(flow);
+  });
+
+  // Populates the metric cards and health checks for a single flow.
+  function renderFlow(flow) {
     const m = analyzeFlow(flow.definition, flow.connectionReferences);
     mFlowName.textContent = flow.name || "(unnamed flow)";
     mTriggers.textContent = m.triggers.toLocaleString();
@@ -977,22 +1029,42 @@
   }
 
   /**
-   * Scans the JSON files in the ZIP for a Power Automate flow definition.
+   * Scans the JSON files in the ZIP for every Power Automate flow definition.
    * Handles the package export shape (properties.definition) and the
    * Dataverse/solution shape (workflows/*.json with stringified clientdata).
-   * Returns { definition, name, connectionReferences } or null.
+   * Returns an array of { definition, name, label, connectionReferences },
+   * de-duplicated so the same flow found in more than one file appears once.
    */
-  async function locateFlowDefinition(buffer, jsonFiles) {
-    // Try the most likely files first, then any remaining JSON.
+  async function locateFlowDefinitions(buffer, jsonFiles) {
+    // The most likely files are scanned first; any remaining JSON is only
+    // scanned if none of those held a flow, so unrelated JSON in a real
+    // export isn't mistaken for an extra flow.
     const preferred = jsonFiles.filter(f =>
       /definition\.json$/i.test(f.name) ||
       /Microsoft\.Flow\/flows\//i.test(f.name) ||
-      /\/workflows\//i.test(f.name)
+      /(^|\/)workflows\//i.test(f.name)
     );
     const rest = jsonFiles.filter(f => !preferred.includes(f));
-    const ordered = preferred.concat(rest);
 
-    for (const entry of ordered) {
+    let flows = await collectFlows(buffer, preferred);
+    if (flows.length === 0) flows = await collectFlows(buffer, rest);
+
+    flows.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Disambiguate flows that share a display name.
+    const counts = {};
+    for (const f of flows) counts[f.name] = (counts[f.name] || 0) + 1;
+    for (const f of flows) {
+      f.label = counts[f.name] > 1 ? f.name + " (" + f.source + ")" : f.name;
+    }
+    return flows;
+  }
+
+  async function collectFlows(buffer, entries) {
+    const flows = [];
+    const seen = new Set();
+
+    for (const entry of entries) {
       let obj;
       try {
         const bytes = await extractEntryBytes(buffer, entry);
@@ -1002,12 +1074,19 @@
       }
 
       const found = resolveDefinition(obj);
-      if (found) {
-        found.name = found.name || fileBaseName(entry.name);
-        return found;
-      }
+      if (!found) continue;
+
+      // Identical definitions are the same flow, even if stored twice.
+      let key;
+      try { key = JSON.stringify(found.definition); } catch { key = entry.name; }
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      found.name = String(found.name || fileBaseName(entry.name));
+      found.source = entry.name;
+      flows.push(found);
     }
-    return null;
+    return flows;
   }
 
   /**
