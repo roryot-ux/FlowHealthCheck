@@ -101,6 +101,21 @@
 
   input[type="file"] { display: none; }
 
+  .privacy-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 14px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .privacy-note strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
   .result {
     margin-top: 24px;
     display: none;
@@ -524,6 +539,7 @@
       <p class="hint">or drag &amp; drop it here</p>
     </label>
     <input type="file" id="fileInput" accept=".zip,application/zip,application/x-zip-compressed" />
+    <p class="privacy-note">🔒 <span><strong>Your files stay private.</strong> Flow exports are analysed locally in your browser and are never uploaded or transmitted.</span></p>
 
     <div class="result" id="result">
       <!-- Flow Metrics (only shown when a Power Automate flow is detected) -->
